@@ -2,6 +2,12 @@ name: Build Galaxyphin Release APK
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'VERSION'
+      - '.github/workflows/build-galaxyphin-release.yml'
   issues:
     types: [opened]
 
@@ -38,16 +44,17 @@ jobs:
           echo "exit_code=$BUILD_EXIT_CODE" >> "$GITHUB_OUTPUT"
           tail -n 200 release-build.log > release-build-tail.txt
 
-      - name: Prepare unsigned release APKs
+      - name: Prepare aligned unsigned release APK
         if: steps.gradle.outputs.exit_code == '0'
         shell: bash
         run: |
           set -euo pipefail
           VERSION="$(tr -d '[:space:]' < VERSION)"
-          DIST_DIR="dist"
+          OUTPUT_DIR='app/build/outputs/apk/default/release'
+          DIST_DIR='dist'
           mkdir -p "$DIST_DIR"
 
-          mapfile -t APKS < <(find app/build/outputs/apk/default/release -maxdepth 1 -type f -name '*.apk' -print | sort)
+          mapfile -t APKS < <(find "$OUTPUT_DIR" -maxdepth 1 -type f -name '*.apk' -print | sort)
           if (( ${#APKS[@]} == 0 )); then
             echo 'No release APK files were generated.' >&2
             find app/build/outputs -maxdepth 6 -type f -print || true
@@ -56,7 +63,6 @@ jobs:
 
           printf 'Generated release APKs:\n'
           printf '  %s\n' "${APKS[@]}"
-          cp "${APKS[@]}" "$DIST_DIR/"
 
           UNIVERSAL_APK=''
           for apk in "${APKS[@]}"; do
@@ -71,7 +77,11 @@ jobs:
             exit 1
           fi
 
-          cp "$UNIVERSAL_APK" "$DIST_DIR/GalaxyMedia-${VERSION}-universal-release-unsigned.apk"
+          ZIPALIGN="${ANDROID_SDK_ROOT}/build-tools/${BUILD_TOOLS_VERSION}/zipalign"
+          "$ZIPALIGN" -f -p 4 "$UNIVERSAL_APK" "$DIST_DIR/GalaxyMedia-${VERSION}-universal-release-aligned-unsigned.apk"
+          "$ZIPALIGN" -c -p 4 "$DIST_DIR/GalaxyMedia-${VERSION}-universal-release-aligned-unsigned.apk"
+
+          cp "${APKS[@]}" "$DIST_DIR/"
           (
             cd "$DIST_DIR"
             sha256sum ./*.apk > SHA256SUMS-UNSIGNED.txt
@@ -98,18 +108,18 @@ jobs:
           retention-days: 30
 
       - name: Report release build result
-        if: always() && github.event_name == 'issues'
+        if: always()
         env:
           GH_TOKEN: ${{ github.token }}
-          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_NUMBER: ${{ github.event.issue.number || '7' }}
           BUILD_EXIT_CODE: ${{ steps.gradle.outputs.exit_code }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         shell: bash
         run: |
           set -euo pipefail
           if [[ "$BUILD_EXIT_CODE" == '0' ]]; then
-            gh issue comment "$ISSUE_NUMBER" --body "Galaxyphin unsigned release APK build completed successfully. Download **Galaxyphin-unsigned-release-apks** from: $RUN_URL"
-            gh issue close "$ISSUE_NUMBER" --reason completed
+            gh issue comment "$ISSUE_NUMBER" --body "Galaxyphin 0.1.1 unsigned release build completed successfully. Download **Galaxyphin-unsigned-release-apks** from: $RUN_URL"
+            gh issue close "$ISSUE_NUMBER" --reason completed || true
           else
             gh issue comment "$ISSUE_NUMBER" --body "Galaxyphin release build failed. Review the log artifact at: $RUN_URL"
           fi

@@ -15,6 +15,10 @@ permissions:
   contents: read
   issues: write
 
+concurrency:
+  group: galaxyphin-release
+  cancel-in-progress: true
+
 jobs:
   build-release:
     if: github.event_name != 'issues' || github.event.issue.title == 'Build Galaxyphin Release'
@@ -31,7 +35,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ISSUE_NUMBER: ${{ github.event.issue.number }}
-        run: gh issue comment "$ISSUE_NUMBER" --body "Galaxyphin 0.1.1 normal release build has started."
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: gh issue comment "$ISSUE_NUMBER" --body "Galaxyphin 0.1.1 normal release build has started: $RUN_URL"
 
       - name: Set up Android build environment
         uses: ./.github/actions/setup

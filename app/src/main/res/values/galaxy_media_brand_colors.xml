@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="galaxy_media_background">#090B14</color>
+    <color name="galaxy_media_icon_background">#050817</color>
+    <color name="galaxy_media_banner_background">#050817</color>
+    <color name="galaxy_media_primary">#5B8CFF</color>
+    <color name="galaxy_media_accent">#27D3FF</color>
+    <color name="galaxy_media_secondary">#7C4DFF</color>
+</resources>

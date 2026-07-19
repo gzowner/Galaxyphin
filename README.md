@@ -2,7 +2,7 @@
 
 Galaxyphin is the **Galaxy Media** branded Android TV, Google TV, and Fire TV client built from the open-source Wholphin Jellyfin client.
 
-![Galaxy Media banner](docs/galaxy-media-banner.jpg)
+![Galaxy Media banner](app/src/main/res/mipmap-xxxhdpi/galaxy_media_banner.webp)
 
 ## Galaxy Media changes
 

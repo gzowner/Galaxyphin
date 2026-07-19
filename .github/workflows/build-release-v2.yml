@@ -1,0 +1,115 @@
+name: Galaxyphin Normal Release
+
+on:
+  workflow_dispatch:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: galaxyphin-normal-release
+  cancel-in-progress: true
+
+jobs:
+  release:
+    if: github.event_name != 'issues' || github.event.issue.title == 'Galaxyphin Normal Release'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Galaxyphin
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Report build start
+        if: github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: gh issue comment "$ISSUE_NUMBER" --body "Galaxyphin 0.1.1 normal release build started: $RUN_URL"
+
+      - name: Set up Android build environment
+        uses: ./.github/actions/setup
+
+      - name: Build unsigned release
+        id: build
+        shell: bash
+        run: |
+          set -o pipefail
+          chmod +x ./gradlew
+          set +e
+          ./gradlew :app:assembleDefaultRelease --stacktrace --no-daemon 2>&1 | tee release-build.log
+          CODE=${PIPESTATUS[0]}
+          set -e
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          tail -n 200 release-build.log > release-build-tail.txt
+
+      - name: Prepare zip-aligned universal APK
+        if: steps.build.outputs.code == '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          OUT='app/build/outputs/apk/default/release'
+          mkdir -p dist
+          mapfile -t APKS < <(find "$OUT" -maxdepth 1 -type f -name '*.apk' -print | sort)
+          (( ${#APKS[@]} > 0 ))
+
+          UNIVERSAL=''
+          for APK in "${APKS[@]}"; do
+            case "$APK" in
+              *-armeabi-v7a*.apk|*-arm64-v8a*.apk) ;;
+              *) UNIVERSAL="$APK"; break ;;
+            esac
+          done
+          [[ -n "$UNIVERSAL" ]]
+
+          ZIPALIGN="${ANDROID_SDK_ROOT}/build-tools/${BUILD_TOOLS_VERSION}/zipalign"
+          TARGET="dist/GalaxyMedia-${VERSION}-universal-release-aligned-unsigned.apk"
+          "$ZIPALIGN" -f -p 4 "$UNIVERSAL" "$TARGET"
+          "$ZIPALIGN" -c -p 4 "$TARGET"
+          sha256sum "$TARGET" > dist/SHA256SUMS-UNSIGNED.txt
+
+      - name: Upload unsigned release APK
+        if: steps.build.outputs.code == '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Galaxyphin-0.1.1-unsigned-release
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Galaxyphin-0.1.1-release-log
+          path: |
+            release-build.log
+            release-build-tail.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Report result
+        if: always() && github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RESULT: ${{ steps.build.outputs.code }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          if [[ "$RESULT" == '0' ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "Galaxyphin 0.1.1 normal release compiled successfully. Download **Galaxyphin-0.1.1-unsigned-release** from: $RUN_URL"
+            gh issue close "$ISSUE_NUMBER" --reason completed
+          else
+            gh issue comment "$ISSUE_NUMBER" --body "Galaxyphin 0.1.1 release build failed. Review the build log: $RUN_URL"
+          fi
+
+      - name: Fail unsuccessful build
+        if: steps.build.outputs.code != '0'
+        run: exit 1

@@ -33,6 +33,14 @@ jobs:
         with:
           fetch-depth: 0
 
+      - name: Provide fallback application version tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! git describe --tags --match='v*' >/dev/null 2>&1; then
+            git tag v0.0.0
+          fi
+
       - name: Set up Android build environment
         uses: ./.github/actions/setup
 
@@ -50,6 +58,21 @@ jobs:
 
           echo "exit_code=$BUILD_EXIT_CODE" >> "$GITHUB_OUTPUT"
           tail -n 180 build.log > build-tail.txt
+
+          awk '
+            /FAILURE: Build failed with an exception\./ { capture=1 }
+            capture && /\* Exception is:/ { exit }
+            capture { print }
+          ' build.log > build-summary.txt
+
+          if [[ ! -s build-summary.txt ]]; then
+            grep -n -E -B 4 -A 12 '(^e: |error:|A problem occurred|Could not |Execution failed|Exception)' build.log \
+              | head -n 180 > build-summary.txt || true
+          fi
+
+          if [[ ! -s build-summary.txt ]]; then
+            cp build-tail.txt build-summary.txt
+          fi
 
       - name: Prepare downloadable APKs
         if: steps.gradle.outputs.exit_code == '0'
@@ -107,6 +130,7 @@ jobs:
           name: Galaxyphin-build-log-${{ github.run_number }}
           path: |
             build.log
+            build-summary.txt
             build-tail.txt
           if-no-files-found: warn
           retention-days: 30
@@ -128,10 +152,10 @@ jobs:
             {
               echo "Galaxyphin APK build failed. Full log artifact: $RUN_URL"
               echo
-              echo '<details><summary>Final Gradle output</summary>'
+              echo '<details><summary>Gradle failure summary</summary>'
               echo
               echo '```text'
-              cat build-tail.txt 2>/dev/null || echo 'Build output was unavailable.'
+              cat build-summary.txt 2>/dev/null || echo 'Build output was unavailable.'
               echo '```'
               echo '</details>'
             } > issue-comment.md

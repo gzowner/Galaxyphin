@@ -1,0 +1,57 @@
+name: Export Android APK Signer
+
+on:
+  workflow_dispatch:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  export:
+    if: github.event_name != 'issues' || github.event.issue.title == 'Export Galaxyphin APK Signer'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Galaxyphin
+        uses: actions/checkout@v4
+
+      - name: Report export start
+        if: github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: gh issue comment "$ISSUE_NUMBER" --body "Exporting Android apksigner tools: $RUN_URL"
+
+      - name: Set up Android build environment
+        uses: ./.github/actions/setup
+
+      - name: Package apksigner
+        shell: bash
+        run: |
+          set -euo pipefail
+          TOOLS="${ANDROID_SDK_ROOT}/build-tools/${BUILD_TOOLS_VERSION}"
+          mkdir -p apksigner-tools/lib
+          cp "$TOOLS/apksigner" apksigner-tools/
+          cp "$TOOLS/lib/apksigner.jar" apksigner-tools/lib/
+          chmod +x apksigner-tools/apksigner
+          printf 'Android build-tools version: %s\n' "$BUILD_TOOLS_VERSION" > apksigner-tools/VERSION.txt
+
+      - name: Upload apksigner tools
+        uses: actions/upload-artifact@v4
+        with:
+          name: Galaxyphin-apksigner-tools
+          path: apksigner-tools/
+          retention-days: 1
+
+      - name: Report export result
+        if: github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          gh issue comment "$ISSUE_NUMBER" --body "Android apksigner tools exported successfully. Download **Galaxyphin-apksigner-tools** from: $RUN_URL"
+          gh issue close "$ISSUE_NUMBER" --reason completed

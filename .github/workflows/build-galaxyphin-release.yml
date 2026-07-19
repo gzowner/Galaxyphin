@@ -1,0 +1,119 @@
+name: Build Galaxyphin Release APK
+
+on:
+  workflow_dispatch:
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+  issues: write
+
+jobs:
+  build-release:
+    if: github.event_name != 'issues' || github.event.issue.title == 'Build Galaxyphin Release'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Galaxyphin
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Android build environment
+        uses: ./.github/actions/setup
+
+      - name: Build unsigned Galaxy Media release APKs
+        id: gradle
+        shell: bash
+        run: |
+          set -o pipefail
+          chmod +x ./gradlew
+
+          set +e
+          ./gradlew :app:assembleDefaultRelease --stacktrace --no-daemon 2>&1 | tee release-build.log
+          BUILD_EXIT_CODE=${PIPESTATUS[0]}
+          set -e
+
+          echo "exit_code=$BUILD_EXIT_CODE" >> "$GITHUB_OUTPUT"
+          tail -n 200 release-build.log > release-build-tail.txt
+
+      - name: Prepare unsigned release APKs
+        if: steps.gradle.outputs.exit_code == '0'
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="$(tr -d '[:space:]' < VERSION)"
+          DIST_DIR="dist"
+          mkdir -p "$DIST_DIR"
+
+          mapfile -t APKS < <(find app/build/outputs/apk/default/release -maxdepth 1 -type f -name '*.apk' -print | sort)
+          if (( ${#APKS[@]} == 0 )); then
+            echo 'No release APK files were generated.' >&2
+            find app/build/outputs -maxdepth 6 -type f -print || true
+            exit 1
+          fi
+
+          printf 'Generated release APKs:\n'
+          printf '  %s\n' "${APKS[@]}"
+          cp "${APKS[@]}" "$DIST_DIR/"
+
+          UNIVERSAL_APK=''
+          for apk in "${APKS[@]}"; do
+            case "$apk" in
+              *-armeabi-v7a*.apk|*-arm64-v8a*.apk) ;;
+              *) UNIVERSAL_APK="$apk"; break ;;
+            esac
+          done
+
+          if [[ -z "$UNIVERSAL_APK" ]]; then
+            echo 'Unable to identify the universal release APK.' >&2
+            exit 1
+          fi
+
+          cp "$UNIVERSAL_APK" "$DIST_DIR/GalaxyMedia-${VERSION}-universal-release-unsigned.apk"
+          (
+            cd "$DIST_DIR"
+            sha256sum ./*.apk > SHA256SUMS-UNSIGNED.txt
+          )
+
+      - name: Upload unsigned release APKs
+        if: steps.gradle.outputs.exit_code == '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Galaxyphin-unsigned-release-apks
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Upload release build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Galaxyphin-release-build-log-${{ github.run_number }}
+          path: |
+            release-build.log
+            release-build-tail.txt
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Report release build result
+        if: always() && github.event_name == 'issues'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          BUILD_EXIT_CODE: ${{ steps.gradle.outputs.exit_code }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "$BUILD_EXIT_CODE" == '0' ]]; then
+            gh issue comment "$ISSUE_NUMBER" --body "Galaxyphin unsigned release APK build completed successfully. Download **Galaxyphin-unsigned-release-apks** from: $RUN_URL"
+            gh issue close "$ISSUE_NUMBER" --reason completed
+          else
+            gh issue comment "$ISSUE_NUMBER" --body "Galaxyphin release build failed. Review the log artifact at: $RUN_URL"
+          fi
+
+      - name: Mark failed Gradle build
+        if: steps.gradle.outputs.exit_code != '0'
+        run: exit 1

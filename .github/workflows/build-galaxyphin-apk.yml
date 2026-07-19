@@ -1,0 +1,90 @@
+name: Build Galaxyphin APK
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'app/**'
+      - 'gradle/**'
+      - 'build.gradle.kts'
+      - 'settings.gradle.kts'
+      - 'gradle.properties'
+      - 'gradlew'
+      - 'gradlew.bat'
+      - 'wholphin-mpv-stub/**'
+      - '.github/actions/setup/**'
+      - '.github/workflows/build-galaxyphin-apk.yml'
+  issues:
+    types: [opened]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    if: github.event_name != 'issues' || github.event.issue.title == 'Build Galaxyphin APK'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Galaxyphin
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Android build environment
+        uses: ./.github/actions/setup
+
+      - name: Build Galaxy Media debug APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          chmod +x ./gradlew
+          ./gradlew :app:assembleDefaultDebug --stacktrace --no-daemon
+
+      - name: Prepare downloadable APKs
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUTPUT_DIR='app/build/outputs/apk/default/debug'
+          DIST_DIR='dist'
+
+          mkdir -p "$DIST_DIR"
+
+          mapfile -t APKS < <(find "$OUTPUT_DIR" -maxdepth 1 -type f -name 'GalaxyMedia-*.apk' -print | sort)
+          if (( ${#APKS[@]} == 0 )); then
+            echo 'No GalaxyMedia APK files were generated.' >&2
+            find app/build/outputs -maxdepth 6 -type f -print || true
+            exit 1
+          fi
+
+          printf 'Generated APKs:\n'
+          printf '  %s\n' "${APKS[@]}"
+          cp "${APKS[@]}" "$DIST_DIR/"
+
+          UNIVERSAL_APK=''
+          for apk in "${APKS[@]}"; do
+            case "$apk" in
+              *-armeabi-v7a.apk|*-arm64-v8a.apk) ;;
+              *) UNIVERSAL_APK="$apk"; break ;;
+            esac
+          done
+
+          if [[ -z "$UNIVERSAL_APK" ]]; then
+            echo 'The universal APK could not be identified.' >&2
+            exit 1
+          fi
+
+          cp "$UNIVERSAL_APK" "$DIST_DIR/GalaxyMedia-universal-debug.apk"
+          (
+            cd "$DIST_DIR"
+            sha256sum ./*.apk > SHA256SUMS.txt
+          )
+
+      - name: Upload Galaxyphin APK artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Galaxyphin-debug-apks
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
